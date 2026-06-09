@@ -1,0 +1,17 @@
+# Build artifacts
+build/
+cmake-build-*/
+
+# Runtime output
+output/
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.log
