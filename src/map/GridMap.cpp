@@ -5,13 +5,18 @@
 
 namespace rtk_nav {
 
-GridMap::GridMap(int width, int height, double resolution, double origin_x, double origin_y)
+GridMap::GridMap(int width,
+                 int height,
+                 double resolution,
+                 double origin_x,
+                 double origin_y,
+                 CellState initial_state)
     : width_(width),
       height_(height),
       resolution_(resolution),
       origin_x_(origin_x),
       origin_y_(origin_y),
-      data_(static_cast<std::size_t>(width * height), CellState::Occupied) {
+      data_(static_cast<std::size_t>(width * height), initial_state) {
     if (width <= 0 || height <= 0) {
         throw std::runtime_error("GridMap width and height must be positive");
     }

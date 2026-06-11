@@ -17,7 +17,12 @@ enum class CellState : std::uint8_t {
 class GridMap {
 public:
     GridMap() = default;
-    GridMap(int width, int height, double resolution, double origin_x, double origin_y);
+    GridMap(int width,
+            int height,
+            double resolution,
+            double origin_x,
+            double origin_y,
+            CellState initial_state = CellState::Occupied);
 
     int width() const { return width_; }
     int height() const { return height_; }

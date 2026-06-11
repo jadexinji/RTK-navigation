@@ -28,6 +28,8 @@ cv::Scalar pointColor(PointType type) {
             return cv::Scalar(40, 40, 230);
         case PointType::Boundary:
             return cv::Scalar(20, 20, 20);
+        case PointType::Survey:
+            return cv::Scalar(210, 150, 40);
         case PointType::Start:
             return cv::Scalar(70, 190, 70);
         case PointType::Goal:

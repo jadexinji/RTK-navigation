@@ -4,6 +4,11 @@ cmake-build-*/
 
 # Runtime output
 output/
+resume_rendered*/
+
+# Private survey data
+*.dat
+data/private/
 
 # macOS
 .DS_Store

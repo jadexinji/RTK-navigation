@@ -1,6 +1,8 @@
 #include <filesystem>
 #include <cstdlib>
+#include <algorithm>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -8,10 +10,12 @@
 
 #include "common/Types.h"
 #include "coordinate/CoordinateTransformer.h"
+#include "map/CassMapBuilder.h"
 #include "map/GridMap.h"
 #include "map/MapBuilder.h"
 #include "navigation/Navigator.h"
 #include "planner/AStar.h"
+#include "sensor/CassDatReader.h"
 #include "sensor/RTKReader.h"
 #include "visualization/Viewer.h"
 
@@ -22,11 +26,20 @@ using namespace rtk_nav;
 struct ProgramOptions {
     std::string csv_path = "data/rtk_points.csv";
     std::string output_path = "output/navigation_result.png";
+    std::optional<std::string> cass_path;
+    std::string start_id = "I51";
+    std::string goal_id = "I73";
+    bool output_was_set = false;
     bool no_gui = false;
 };
 
 void printUsage(const char* program_name) {
-    std::cout << "Usage: " << program_name << " [--csv data/rtk_points.csv] [--output output.png] [--no-gui]\n";
+    std::cout << "Usage:\n"
+              << "  " << program_name
+              << " [--csv data/rtk_points.csv] [--output output.png] [--no-gui]\n"
+              << "  " << program_name
+              << " --cass survey.dat [--start-id I51] [--goal-id I73]"
+                 " [--output output.png] [--no-gui]\n";
 }
 
 ProgramOptions parseArgs(int argc, char** argv) {
@@ -48,16 +61,48 @@ ProgramOptions parseArgs(int argc, char** argv) {
             options.csv_path = argv[++i];
             continue;
         }
+        if (arg == "--cass") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error("--cass requires a DAT file path");
+            }
+            options.cass_path = argv[++i];
+            continue;
+        }
+        if (arg == "--start-id") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error("--start-id requires a CASS point id");
+            }
+            options.start_id = argv[++i];
+            continue;
+        }
+        if (arg == "--goal-id") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error("--goal-id requires a CASS point id");
+            }
+            options.goal_id = argv[++i];
+            continue;
+        }
         if (arg == "--output") {
             if (i + 1 >= argc) {
                 throw std::runtime_error("--output requires a file path");
             }
             options.output_path = argv[++i];
+            options.output_was_set = true;
             continue;
         }
         throw std::runtime_error("Unknown argument: " + arg);
     }
     return options;
+}
+
+const CassPoint& findCassPoint(const std::vector<CassPoint>& points, const std::string& id) {
+    const auto result = std::find_if(points.begin(), points.end(), [&](const CassPoint& point) {
+        return point.id == id;
+    });
+    if (result == points.end()) {
+        throw std::runtime_error("CASS data is missing point id: " + id);
+    }
+    return *result;
 }
 
 const RTKPoint& findRequiredPoint(const std::vector<RTKPoint>& points, PointType type) {
@@ -95,67 +140,171 @@ void createOutputDirectory(const std::string& output_path) {
     }
 }
 
+void visualizeResult(const ProgramOptions& options,
+                     const std::string& output_path,
+                     const GridMap& grid_map,
+                     const std::vector<LocalPoint>& local_points,
+                     const GridCell& start_cell,
+                     const GridCell& goal_cell,
+                     const std::vector<GridCell>& path_cells,
+                     double navigation_lookahead = 1.0) {
+    std::vector<VehicleState> trajectory;
+    if (!path_cells.empty()) {
+        NavigatorConfig navigator_config;
+        navigator_config.lookahead_distance = navigation_lookahead;
+        Navigator navigator(navigator_config);
+        trajectory = navigator.simulate(pathCellsToWorld(grid_map, path_cells));
+    }
+    const std::size_t collision_states = static_cast<std::size_t>(std::count_if(
+        trajectory.begin(), trajectory.end(), [&](const VehicleState& state) {
+            return !grid_map.isFree(grid_map.worldToGrid(state.x, state.y));
+        }));
+
+    std::cout << "Grid map: " << grid_map.width() << " x " << grid_map.height()
+              << " cells, resolution=" << grid_map.resolution() << " m/cell\n";
+    std::cout << "Start cell: row=" << start_cell.row << " col=" << start_cell.col << "\n";
+    std::cout << "Goal cell: row=" << goal_cell.row << " col=" << goal_cell.col << "\n";
+    std::cout << "A* path cells: " << path_cells.size() << "\n";
+    std::cout << "Vehicle trajectory states: " << trajectory.size() << "\n";
+    std::cout << "Vehicle trajectory collision states: " << collision_states << "\n";
+    if (path_cells.empty()) {
+        std::cout << "Warning: no path found. The map will still be visualized.\n";
+    }
+
+    Viewer viewer;
+    createOutputDirectory(output_path);
+    viewer.saveSnapshot(output_path,
+                        grid_map,
+                        local_points,
+                        path_cells,
+                        trajectory,
+                        start_cell,
+                        goal_cell);
+    std::cout << "Saved visualization snapshot: " << output_path << "\n";
+    if (!options.no_gui) {
+        viewer.show(grid_map,
+                    local_points,
+                    path_cells,
+                    trajectory,
+                    start_cell,
+                    goal_cell);
+    }
+}
+
+void runGeodeticCsv(const ProgramOptions& options) {
+    RTKReader reader;
+    const std::vector<RTKPoint> rtk_points = reader.load(options.csv_path);
+    const RTKPoint& start_rtk = findRequiredPoint(rtk_points, PointType::Start);
+    const RTKPoint& goal_rtk = findRequiredPoint(rtk_points, PointType::Goal);
+
+    CoordinateTransformer transformer(start_rtk.latitude, start_rtk.longitude, start_rtk.height);
+    const std::vector<LocalPoint> local_points = transformer.toLocal(rtk_points);
+    const LocalPoint& start_local = findRequiredPoint(local_points, PointType::Start);
+    const LocalPoint& goal_local = findRequiredPoint(local_points, PointType::Goal);
+
+    MapBuilder map_builder;
+    const GridMap grid_map = map_builder.build(local_points);
+    const GridCell start_cell = grid_map.worldToGrid(start_local.x, start_local.y);
+    const GridCell goal_cell = grid_map.worldToGrid(goal_local.x, goal_local.y);
+    const std::vector<GridCell> path_cells = AStar{}.plan(grid_map, start_cell, goal_cell);
+
+    std::cout << "Input mode: WGS84 CSV\n";
+    std::cout << "Loaded RTK points: " << rtk_points.size() << "\n";
+    std::cout << "ENU origin: " << start_rtk.id
+              << " lat=" << transformer.originLatitude()
+              << " lon=" << transformer.originLongitude()
+              << " h=" << transformer.originHeight() << "\n";
+    std::cout << "Navigation goal: " << goal_rtk.id
+              << " lat=" << goal_rtk.latitude
+              << " lon=" << goal_rtk.longitude
+              << " h=" << goal_rtk.height << "\n";
+    visualizeResult(options,
+                    options.output_path,
+                    grid_map,
+                    local_points,
+                    start_cell,
+                    goal_cell,
+                    path_cells);
+}
+
+void runCassDat(const ProgramOptions& options) {
+    CassDatReader reader;
+    const std::vector<CassPoint> all_points = reader.load(*options.cass_path);
+    const std::vector<CassPoint> survey_points = reader.filterSurveyArea(all_points);
+    if (survey_points.empty()) {
+        throw std::runtime_error("No survey-area points remain after filtering the base station");
+    }
+
+    const CassPoint& start_raw = findCassPoint(survey_points, options.start_id);
+    const CassPoint& goal_raw = findCassPoint(survey_points, options.goal_id);
+    const auto min_easting = std::min_element(
+        survey_points.begin(), survey_points.end(), [](const CassPoint& lhs, const CassPoint& rhs) {
+            return lhs.easting < rhs.easting;
+        })->easting;
+    const auto min_northing = std::min_element(
+        survey_points.begin(), survey_points.end(), [](const CassPoint& lhs, const CassPoint& rhs) {
+            return lhs.northing < rhs.northing;
+        })->northing;
+
+    std::vector<CassLocalPoint> cass_local =
+        reader.toLocal(survey_points, min_easting, min_northing);
+    std::vector<LocalPoint> display_points;
+    display_points.reserve(cass_local.size() + 2);
+    for (const CassLocalPoint& point : cass_local) {
+        display_points.push_back(point.point);
+    }
+
+    LocalPoint start_local{start_raw.id,
+                           start_raw.easting - min_easting,
+                           start_raw.northing - min_northing,
+                           start_raw.height,
+                           PointType::Start};
+    LocalPoint goal_local{goal_raw.id,
+                          goal_raw.easting - min_easting,
+                          goal_raw.northing - min_northing,
+                          goal_raw.height,
+                          PointType::Goal};
+    display_points.push_back(start_local);
+    display_points.push_back(goal_local);
+
+    CassMapBuilder map_builder;
+    const GridMap grid_map = map_builder.build(cass_local, start_local, goal_local);
+    const GridCell start_cell = grid_map.worldToGrid(start_local.x, start_local.y);
+    const GridCell goal_cell = grid_map.worldToGrid(goal_local.x, goal_local.y);
+    const std::vector<GridCell> path_cells = AStar{}.plan(grid_map, start_cell, goal_cell);
+
+    const std::string output_path =
+        options.output_was_set ? options.output_path : "output/cass_navigation_result.png";
+    std::cout << "Input mode: CHCNAV/CASS planar DAT\n";
+    std::cout << "Loaded DAT records: " << all_points.size() << "\n";
+    std::cout << "Survey-area points: " << survey_points.size()
+              << " (excluded " << all_points.size() - survey_points.size()
+              << " distant base-station record(s))\n";
+    std::cout << "Local origin: E=" << min_easting << " N=" << min_northing << "\n";
+    std::cout << "Start: " << start_raw.id << " E=" << start_raw.easting
+              << " N=" << start_raw.northing << "\n";
+    std::cout << "Goal: " << goal_raw.id << " E=" << goal_raw.easting
+              << " N=" << goal_raw.northing << "\n";
+    std::cout << "Approximate classification: B=building, R=water, F=vegetation/structures\n";
+    visualizeResult(options,
+                    output_path,
+                    grid_map,
+                    display_points,
+                    start_cell,
+                    goal_cell,
+                    path_cells);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     try {
         const ProgramOptions options = parseArgs(argc, argv);
-
-        RTKReader reader;
-        const std::vector<RTKPoint> rtk_points = reader.load(options.csv_path);
-        const RTKPoint& start_rtk = findRequiredPoint(rtk_points, PointType::Start);
-        const RTKPoint& goal_rtk = findRequiredPoint(rtk_points, PointType::Goal);
-
-        CoordinateTransformer transformer(start_rtk.latitude, start_rtk.longitude, start_rtk.height);
-        const std::vector<LocalPoint> local_points = transformer.toLocal(rtk_points);
-        const LocalPoint& start_local = findRequiredPoint(local_points, PointType::Start);
-        const LocalPoint& goal_local = findRequiredPoint(local_points, PointType::Goal);
-
-        MapBuilder map_builder;
-        GridMap grid_map = map_builder.build(local_points);
-        const GridCell start_cell = grid_map.worldToGrid(start_local.x, start_local.y);
-        const GridCell goal_cell = grid_map.worldToGrid(goal_local.x, goal_local.y);
-
-        AStar planner;
-        const std::vector<GridCell> path_cells = planner.plan(grid_map, start_cell, goal_cell);
-
-        std::vector<std::pair<double, double>> world_path;
-        std::vector<VehicleState> trajectory;
-        if (!path_cells.empty()) {
-            world_path = pathCellsToWorld(grid_map, path_cells);
-            Navigator navigator;
-            trajectory = navigator.simulate(world_path);
+        if (options.cass_path.has_value()) {
+            runCassDat(options);
+        } else {
+            runGeodeticCsv(options);
         }
-
-        std::cout << "Loaded RTK points: " << rtk_points.size() << "\n";
-        std::cout << "ENU origin: " << start_rtk.id
-                  << " lat=" << transformer.originLatitude()
-                  << " lon=" << transformer.originLongitude()
-                  << " h=" << transformer.originHeight() << "\n";
-        std::cout << "Navigation goal: " << goal_rtk.id
-                  << " lat=" << goal_rtk.latitude
-                  << " lon=" << goal_rtk.longitude
-                  << " h=" << goal_rtk.height << "\n";
-        std::cout << "Grid map: " << grid_map.width() << " x " << grid_map.height()
-                  << " cells, resolution=" << grid_map.resolution() << " m/cell\n";
-        std::cout << "Start cell: row=" << start_cell.row << " col=" << start_cell.col << "\n";
-        std::cout << "Goal cell: row=" << goal_cell.row << " col=" << goal_cell.col << "\n";
-        std::cout << "A* path cells: " << path_cells.size() << "\n";
-        std::cout << "Vehicle trajectory states: " << trajectory.size() << "\n";
-
-        if (path_cells.empty()) {
-            std::cout << "Warning: no path found. The map and RTK points will still be visualized.\n";
-        }
-
-        Viewer viewer;
-        createOutputDirectory(options.output_path);
-        viewer.saveSnapshot(options.output_path, grid_map, local_points, path_cells, trajectory, start_cell, goal_cell);
-        std::cout << "Saved visualization snapshot: " << options.output_path << "\n";
-
-        if (!options.no_gui) {
-            viewer.show(grid_map, local_points, path_cells, trajectory, start_cell, goal_cell);
-        }
-
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Error: " << error.what() << "\n";

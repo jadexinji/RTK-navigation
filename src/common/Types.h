@@ -9,6 +9,7 @@ enum class PointType {
     Road,
     Obstacle,
     Boundary,
+    Survey,
     Start,
     Goal
 };
@@ -57,6 +58,8 @@ inline std::string pointTypeToString(PointType type) {
             return "obstacle";
         case PointType::Boundary:
             return "boundary";
+        case PointType::Survey:
+            return "survey";
         case PointType::Start:
             return "start";
         case PointType::Goal:
@@ -74,6 +77,9 @@ inline std::optional<PointType> pointTypeFromString(const std::string& text) {
     }
     if (text == "boundary") {
         return PointType::Boundary;
+    }
+    if (text == "survey") {
+        return PointType::Survey;
     }
     if (text == "start") {
         return PointType::Start;

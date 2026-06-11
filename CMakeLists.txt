@@ -12,9 +12,11 @@ find_package(Eigen3 REQUIRED)
 add_executable(${PROJECT_NAME}
     src/main.cpp
     src/sensor/RTKReader.cpp
+    src/sensor/CassDatReader.cpp
     src/coordinate/CoordinateTransformer.cpp
     src/map/GridMap.cpp
     src/map/MapBuilder.cpp
+    src/map/CassMapBuilder.cpp
     src/planner/AStar.cpp
     src/navigation/Navigator.cpp
     src/visualization/Viewer.cpp
