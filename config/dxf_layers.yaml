@@ -1,10 +1,13 @@
 %YAML:1.0
 ---
 map:
-  resolution: 0.5
+  resolution: 0.25
   padding: 5.0
-  default_state: "free"
-  endpoint_clearance: 1.0
+  default_state: "occupied"
+  endpoint_clearance: 0.5
+  require_endpoints_on_free: 1
+  clearance_cost_radius: 2.0
+  clearance_cost_weight: 2.5
 
 rules:
   - layers: [ "BUILDING", "BUILDINGS", "JZW", "FW", "房屋", "建筑" ]
@@ -29,7 +32,7 @@ rules:
     occupancy: "free"
     force_closed: 0
     inflation: 0.0
-    line_width: 4.0
+    line_width: 6.0
 
   - layers: [ "WALL", "FENCE", "WQ", "围墙", "围栏" ]
     match: "exact"

@@ -33,7 +33,7 @@ RTK / GNSS 测量数据
 
 ### 通用 DXF 导航
 
-程序读取 ASCII DXF 中的图层和几何实体，根据 YAML 图层规则识别建筑、道路、水域、植被和围墙，再自动生成占据地图和导航路径。
+程序读取 ASCII DXF 中的图层和几何实体，根据 YAML 图层规则识别建筑、道路、水域、植被和围墙，再自动生成占据地图和导航路径。当前效果图启用了道路约束模式：只有道路区域可通行，车辆不会从普通空地穿过。
 
 ![通用 DXF 导航结果](docs/images/dxf_navigation_result.png)
 
@@ -152,6 +152,15 @@ config/dxf_layers.yaml
 配置示例：
 
 ```yaml
+map:
+  resolution: 0.25
+  padding: 5.0
+  default_state: "occupied"
+  endpoint_clearance: 0.5
+  require_endpoints_on_free: 1
+  clearance_cost_radius: 2.0
+  clearance_cost_weight: 2.5
+
 rules:
   - layers: [ "BUILDING", "JZW", "房屋", "建筑" ]
     match: "exact"
@@ -161,6 +170,30 @@ rules:
     inflation: 1.5
     line_width: 0.3
 ```
+
+道路约束配置的含义：
+
+- `default_state: occupied`：地图默认不可通行
+- `road + occupancy: free`：只将道路图层释放为自由区域
+- `resolution: 0.25`：DXF 道路按 0.25 米栅格生成，使斜线和曲线边缘更平滑
+- `line_width`：仅用于开放道路中心线，对应实际道路宽度
+- 闭合道路多段线：严格按照多边形边界填充为可通行道路面，不再使用 `line_width` 向外扩张
+- `require_endpoints_on_free`：起点和终点必须位于道路内，否则拒绝规划
+- `clearance_cost_radius/weight`：对靠近道路边缘的栅格增加代价，使路径倾向道路中部
+
+道路中心线规则示例：
+
+```yaml
+- layers: [ "ROAD", "ROADS", "DL", "道路", "车行道" ]
+  match: "exact"
+  semantic: "road"
+  occupancy: "free"
+  force_closed: 0
+  inflation: 0.0
+  line_width: 6.0
+```
+
+对于只有道路中心线的 DXF，`line_width` 应设置为真实路宽。对于包含闭合道路边界的 DXF，应将每个道路面绘制为闭合 `LWPOLYLINE` 或闭合 `POLYLINE` 并放入道路图层。多个道路多边形可以相交或重叠，程序会将它们合并为连续可通行区域，例如十字路口或 T 形路口。
 
 未来通用运行接口已经固定为：
 
@@ -367,6 +400,7 @@ Saved visualization snapshot: output/navigation_result.png
 - 当前版本不实现 DWA，导航模块使用 Pure Pursuit 风格路径跟踪。
 - 当前版本可以读取华测/CASS 平面坐标 DAT，但地物分类仍采用针对样例测区的人工规则。
 - 已支持通用 ASCII DXF 图层解析、地物分类、栅格建图和导航；复杂实体与 Binary DXF 可在后续接入 `libdxfrw`。
+- DXF 模式支持道路约束建图、起终点道路校验和道路边缘代价。
 
 ## 后续可扩展方向
 

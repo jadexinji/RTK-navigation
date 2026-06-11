@@ -42,37 +42,48 @@ int main() {
                 "Built-in ASCII DXF backend should be available");
         const std::vector<MapFeature> features =
             reader.load(RTK_NAV_TEST_DXF);
-        require(features.size() == 5,
-                "Expected five supported DXF features");
+        require(features.size() == 7,
+                "Expected seven supported DXF features");
 
         const MapFeature& line =
-            findByLayerAndGeometry(features, "ROAD", FeatureGeometry::Polyline, 0);
+            findByLayerAndGeometry(
+                features, "CENTERLINE_TEST", FeatureGeometry::Polyline);
         require(line.vertices.size() == 2,
                 "LINE should contain two vertices");
         require(std::abs(line.vertices[1].x - 20.0) < 1e-9,
                 "LINE endpoint X was parsed incorrectly");
 
         const MapFeature& point =
-            findByLayerAndGeometry(features, "TREE", FeatureGeometry::Point);
+            findByLayerAndGeometry(features, "POINT_TEST", FeatureGeometry::Point);
         require(point.vertices.size() == 1,
                 "POINT should contain one vertex");
         require(std::abs(point.vertices[0].y - 4.0) < 1e-9,
                 "POINT Y coordinate was parsed incorrectly");
 
         const MapFeature& building =
-            findByLayerAndGeometry(features, "BUILDING", FeatureGeometry::Polygon);
+            findByLayerAndGeometry(
+                features, "BUILDING_TEST", FeatureGeometry::Polygon);
         require(building.closed,
                 "Closed LWPOLYLINE was not marked as closed");
         require(building.vertices.size() == 4,
                 "Building LWPOLYLINE should contain four vertices");
 
+        const MapFeature& road_surface =
+            findByLayerAndGeometry(features, "ROAD", FeatureGeometry::Polygon);
+        require(road_surface.closed,
+                "Road surface LWPOLYLINE was not marked as closed");
+        require(road_surface.vertices.size() == 4,
+                "Road surface polygon should contain four vertices");
+
         const MapFeature& curved_road =
-            findByLayerAndGeometry(features, "ROAD", FeatureGeometry::Polyline, 1);
+            findByLayerAndGeometry(
+                features, "CURVE_TEST", FeatureGeometry::Polyline);
         require(curved_road.vertices.size() > 2,
                 "Bulge arc was not expanded into intermediate vertices");
 
         const MapFeature& wall =
-            findByLayerAndGeometry(features, "WALL", FeatureGeometry::Polygon);
+            findByLayerAndGeometry(
+                features, "WALL_TEST", FeatureGeometry::Polygon);
         require(wall.closed,
                 "Traditional POLYLINE closed flag was not preserved");
         require(wall.vertices.size() == 3,

@@ -390,11 +390,21 @@ void runDxf(const ProgramOptions& options) {
     const GridMap grid_map = map_builder.build(features, start, goal);
     const GridCell start_cell = grid_map.worldToGrid(start.x, start.y);
     const GridCell goal_cell = grid_map.worldToGrid(goal.x, goal.y);
+    const FeatureMapSettings& map_settings =
+        layer_config.mapSettings();
+    AStarConfig planner_config;
+    planner_config.clearance_cost_radius =
+        map_settings.clearance_cost_radius;
+    planner_config.clearance_cost_weight =
+        map_settings.clearance_cost_weight;
     const std::vector<GridCell> path_cells =
-        AStar{}.plan(grid_map, start_cell, goal_cell);
+        AStar{planner_config}.plan(grid_map, start_cell, goal_cell);
 
     std::vector<LocalPoint> display_points;
     for (const ClassifiedFeature& feature : classified) {
+        if (feature.style.occupancy == OccupancyEffect::Ignore) {
+            continue;
+        }
         const PointType point_type = displayPointType(feature.style);
         for (std::size_t i = 0; i < feature.feature.vertices.size(); ++i) {
             const FeatureVertex& vertex = feature.feature.vertices[i];
@@ -416,6 +426,12 @@ void runDxf(const ProgramOptions& options) {
     std::cout << "Input mode: generic DXF\n";
     std::cout << "DXF features: " << features.size() << "\n";
     std::cout << "Layer config: " << options.layer_config_path << "\n";
+    std::cout << "Road-constrained mode: "
+              << (map_settings.require_endpoints_on_free ? "enabled" : "disabled")
+              << "\n";
+    std::cout << "Road-edge cost: radius="
+              << map_settings.clearance_cost_radius
+              << " m weight=" << map_settings.clearance_cost_weight << "\n";
     visualizeResult(options,
                     output_path,
                     grid_map,

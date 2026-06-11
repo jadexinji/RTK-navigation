@@ -26,6 +26,38 @@ bool pointInPolygon(double x,
     return inside;
 }
 
+double distanceToSegment(double x,
+                         double y,
+                         const FeatureVertex& start,
+                         const FeatureVertex& end) {
+    const double dx = end.x - start.x;
+    const double dy = end.y - start.y;
+    const double length_squared = dx * dx + dy * dy;
+    if (length_squared <= 1e-12) {
+        return std::hypot(x - start.x, y - start.y);
+    }
+
+    const double projection =
+        ((x - start.x) * dx + (y - start.y) * dy) / length_squared;
+    const double t = std::clamp(projection, 0.0, 1.0);
+    return std::hypot(x - (start.x + t * dx),
+                      y - (start.y + t * dy));
+}
+
+bool pointOnPolygonBoundary(double x,
+                            double y,
+                            const std::vector<FeatureVertex>& polygon,
+                            double tolerance) {
+    for (std::size_t i = 0; i < polygon.size(); ++i) {
+        const FeatureVertex& start = polygon[i];
+        const FeatureVertex& end = polygon[(i + 1) % polygon.size()];
+        if (distanceToSegment(x, y, start, end) <= tolerance) {
+            return true;
+        }
+    }
+    return false;
+}
+
 CellState effectToCellState(OccupancyEffect effect) {
     switch (effect) {
         case OccupancyEffect::Free:
@@ -106,16 +138,30 @@ GridMap FeatureMapBuilder::build(const std::vector<MapFeature>& features,
     }
 
     markOuterBorder(map);
-    markDisk(map,
-             start.x,
-             start.y,
-             settings.endpoint_clearance,
-             CellState::Free);
-    markDisk(map,
-             goal.x,
-             goal.y,
-             settings.endpoint_clearance,
-             CellState::Free);
+    const GridCell start_cell = map.worldToGrid(start.x, start.y);
+    const GridCell goal_cell = map.worldToGrid(goal.x, goal.y);
+    if (settings.require_endpoints_on_free) {
+        if (!map.isFree(start_cell)) {
+            throw std::runtime_error(
+                "DXF start point is outside the configured drivable road area");
+        }
+        if (!map.isFree(goal_cell)) {
+            throw std::runtime_error(
+                "DXF goal point is outside the configured drivable road area");
+        }
+    }
+    if (!settings.require_endpoints_on_free) {
+        markDisk(map,
+                 start.x,
+                 start.y,
+                 settings.endpoint_clearance,
+                 CellState::Free);
+        markDisk(map,
+                 goal.x,
+                 goal.y,
+                 settings.endpoint_clearance,
+                 CellState::Free);
+    }
     return map;
 }
 
@@ -137,33 +183,39 @@ void FeatureMapBuilder::rasterize(GridMap& map,
     }
 
     const CellState state = effectToCellState(feature.style.occupancy);
-    const double radius =
-        feature.style.inflation + feature.style.line_width * 0.5;
     const bool closed = feature.feature.closed ||
                         feature.style.force_closed ||
                         feature.feature.geometry == FeatureGeometry::Polygon;
 
     if (feature.feature.geometry == FeatureGeometry::Point) {
         const FeatureVertex& point = feature.feature.vertices.front();
+        const double radius =
+            feature.style.inflation + feature.style.line_width * 0.5;
         markDisk(map, point.x, point.y, radius, state);
         return;
     }
 
     if (closed && feature.feature.vertices.size() >= 3) {
         fillPolygon(map, feature.feature.vertices, state);
+        if (feature.style.inflation > 0.0) {
+            for (std::size_t i = 0; i < feature.feature.vertices.size(); ++i) {
+                markLine(map,
+                         feature.feature.vertices[i],
+                         feature.feature.vertices[
+                             (i + 1) % feature.feature.vertices.size()],
+                         feature.style.inflation,
+                         state);
+            }
+        }
+        return;
     }
 
+    const double radius =
+        feature.style.inflation + feature.style.line_width * 0.5;
     for (std::size_t i = 1; i < feature.feature.vertices.size(); ++i) {
         markLine(map,
                  feature.feature.vertices[i - 1],
                  feature.feature.vertices[i],
-                 radius,
-                 state);
-    }
-    if (closed && feature.feature.vertices.size() >= 2) {
-        markLine(map,
-                 feature.feature.vertices.back(),
-                 feature.feature.vertices.front(),
                  radius,
                  state);
     }
@@ -186,13 +238,16 @@ void FeatureMapBuilder::fillPolygon(
 
     const GridCell min_cell = map.worldToGrid(min_x, min_y);
     const GridCell max_cell = map.worldToGrid(max_x, max_y);
+    const double boundary_tolerance = map.resolution() * 0.51;
     for (int row = min_cell.row; row <= max_cell.row; ++row) {
         for (int col = min_cell.col; col <= max_cell.col; ++col) {
             if (!map.inBounds(row, col)) {
                 continue;
             }
             const auto [x, y] = map.gridToWorld(GridCell{row, col});
-            if (pointInPolygon(x, y, polygon)) {
+            if (pointInPolygon(x, y, polygon) ||
+                pointOnPolygonBoundary(
+                    x, y, polygon, boundary_tolerance)) {
                 map.setCell(row, col, state);
             }
         }

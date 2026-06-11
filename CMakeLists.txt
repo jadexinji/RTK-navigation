@@ -97,4 +97,20 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME dxf_reader COMMAND dxf_reader_test)
+
+    add_executable(astar_clearance_test
+        tests/AStarClearanceTest.cpp
+        src/map/GridMap.cpp
+        src/planner/AStar.cpp
+    )
+
+    target_include_directories(astar_clearance_test PRIVATE src)
+
+    if(MSVC)
+        target_compile_options(astar_clearance_test PRIVATE /W4)
+    else()
+        target_compile_options(astar_clearance_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    add_test(NAME astar_clearance COMMAND astar_clearance_test)
 endif()

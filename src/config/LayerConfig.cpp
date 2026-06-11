@@ -130,12 +130,28 @@ LayerConfig LayerConfig::load(const std::string& yaml_path) {
     if (!map["endpoint_clearance"].empty()) {
         map["endpoint_clearance"] >> config.map_settings_.endpoint_clearance;
     }
+    if (!map["require_endpoints_on_free"].empty()) {
+        int require_endpoints = 0;
+        map["require_endpoints_on_free"] >> require_endpoints;
+        config.map_settings_.require_endpoints_on_free =
+            require_endpoints != 0;
+    }
+    if (!map["clearance_cost_radius"].empty()) {
+        map["clearance_cost_radius"] >>
+            config.map_settings_.clearance_cost_radius;
+    }
+    if (!map["clearance_cost_weight"].empty()) {
+        map["clearance_cost_weight"] >>
+            config.map_settings_.clearance_cost_weight;
+    }
     config.map_settings_.default_state =
         parseDefaultState(readRequiredString(map, "default_state", "map section"));
 
     if (config.map_settings_.resolution <= 0.0 ||
         config.map_settings_.padding < 0.0 ||
-        config.map_settings_.endpoint_clearance < 0.0) {
+        config.map_settings_.endpoint_clearance < 0.0 ||
+        config.map_settings_.clearance_cost_radius < 0.0 ||
+        config.map_settings_.clearance_cost_weight < 0.0) {
         throw std::runtime_error("DXF map settings contain invalid negative values");
     }
 

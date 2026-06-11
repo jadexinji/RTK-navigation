@@ -44,6 +44,21 @@ MapFeature makeUnknownFeature() {
     return feature;
 }
 
+MapFeature makeRoad() {
+    MapFeature feature;
+    feature.id = "road-1";
+    feature.layer = "ROAD";
+    feature.geometry = FeatureGeometry::Polygon;
+    feature.closed = true;
+    feature.vertices = {
+        FeatureVertex{0.0, 0.0, 0.0},
+        FeatureVertex{20.0, 0.0, 0.0},
+        FeatureVertex{20.0, 20.0, 0.0},
+        FeatureVertex{0.0, 20.0, 0.0}
+    };
+    return feature;
+}
+
 }  // namespace
 
 int main() {
@@ -52,6 +67,7 @@ int main() {
         FeatureMapBuilder builder(config);
 
         const std::vector<MapFeature> features = {
+            makeRoad(),
             makeBuilding(),
             makeUnknownFeature()
         };
@@ -65,25 +81,47 @@ int main() {
                 "Start cell is not free");
         require(map.isFree(map.worldToGrid(goal.x, goal.y)),
                 "Goal cell is not free");
+        require(map.cell(map.worldToGrid(-1.0, 10.0)) == CellState::Occupied,
+                "Closed road polygon was incorrectly expanded by line_width");
 
         const std::vector<ClassifiedFeature> classified =
             builder.classify(features);
-        require(classified.size() == 2, "Unexpected classification result count");
-        require(classified[0].style.semantic == FeatureSemantic::Building,
+        require(classified.size() == 3, "Unexpected classification result count");
+        require(classified[0].style.semantic == FeatureSemantic::Road,
+                "ROAD layer did not map to road semantic");
+        require(classified[0].style.occupancy == OccupancyEffect::Free,
+                "ROAD layer did not map to free cells");
+        require(classified[1].style.semantic == FeatureSemantic::Building,
                 "BUILDING layer did not map to building semantic");
-        require(classified[0].style.occupancy == OccupancyEffect::Occupied,
+        require(classified[1].style.occupancy == OccupancyEffect::Occupied,
                 "BUILDING layer did not map to occupied cells");
-        require(classified[1].style.occupancy == OccupancyEffect::Ignore,
+        require(classified[2].style.occupancy == OccupancyEffect::Ignore,
                 "Unknown layer should be ignored");
 
         const GridCell start_cell = map.worldToGrid(start.x, start.y);
         const GridCell goal_cell = map.worldToGrid(goal.x, goal.y);
+        AStarConfig planner_config;
+        planner_config.clearance_cost_radius =
+            config.mapSettings().clearance_cost_radius;
+        planner_config.clearance_cost_weight =
+            config.mapSettings().clearance_cost_weight;
         const std::vector<GridCell> path =
-            AStar{}.plan(map, start_cell, goal_cell);
+            AStar{planner_config}.plan(map, start_cell, goal_cell);
         require(!path.empty(), "A* failed to route around the building");
         for (const GridCell& cell : path) {
             require(map.isFree(cell), "A* path entered an occupied cell");
         }
+
+        bool rejected_off_road_start = false;
+        try {
+            const LocalPoint off_road{
+                "off-road", -1.0, 10.0, 0.0, PointType::Start};
+            builder.build(features, off_road, goal);
+        } catch (const std::runtime_error&) {
+            rejected_off_road_start = true;
+        }
+        require(rejected_off_road_start,
+                "Road-constrained map accepted an off-road start point");
 
         std::cout << "Feature map pipeline test passed: "
                   << path.size() << " path cells\n";

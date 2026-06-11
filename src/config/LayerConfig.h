@@ -24,6 +24,9 @@ struct FeatureMapSettings {
     double padding = 5.0;
     CellState default_state = CellState::Free;
     double endpoint_clearance = 1.0;
+    bool require_endpoints_on_free = false;
+    double clearance_cost_radius = 0.0;
+    double clearance_cost_weight = 0.0;
 };
 
 class LayerConfig {
