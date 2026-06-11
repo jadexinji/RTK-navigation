@@ -77,4 +77,24 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME feature_map_pipeline COMMAND feature_map_pipeline_test)
+
+    add_executable(dxf_reader_test
+        tests/DxfReaderTest.cpp
+        src/dxf/DxfReader.cpp
+    )
+
+    target_include_directories(dxf_reader_test PRIVATE src)
+
+    target_compile_definitions(dxf_reader_test
+        PRIVATE
+            RTK_NAV_TEST_DXF="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/navigation_map_ascii.dxf"
+    )
+
+    if(MSVC)
+        target_compile_options(dxf_reader_test PRIVATE /W4)
+    else()
+        target_compile_options(dxf_reader_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    add_test(NAME dxf_reader COMMAND dxf_reader_test)
 endif()

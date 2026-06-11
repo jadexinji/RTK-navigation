@@ -31,6 +31,12 @@ RTK / GNSS 测量数据
 
 ![华测 CASS 实测数据导航结果](docs/images/cass_navigation_result.png)
 
+### 通用 DXF 导航
+
+程序读取 ASCII DXF 中的图层和几何实体，根据 YAML 图层规则识别建筑、道路、水域、植被和围墙，再自动生成占据地图和导航路径。
+
+![通用 DXF 导航结果](docs/images/dxf_navigation_result.png)
+
 ## 技术栈
 
 - C++17
@@ -135,7 +141,7 @@ DXF geometry
 - `MapFeature`：统一表示点、折线和闭合多边形
 - `LayerConfig`：通过 YAML 配置图层语义和占据规则
 - `FeatureMapBuilder`：将通用地物生成占据栅格
-- `DxfReader`：DXF 解析后端接口
+- `DxfReader`：读取 ASCII DXF 几何和图层
 
 图层配置文件：
 
@@ -169,8 +175,25 @@ rules:
   --no-gui
 ```
 
-当前环境尚未链接 DXF 解析库，因此 `--dxf` 会明确提示解析后端不可用。计划使用成熟的
-[libdxfrw](https://github.com/LibreCAD/libdxfrw) 读取 ASCII/Binary DXF，而不是在项目中自行实现不完整的 DXF 解析器。
+当前内置解析器支持：
+
+- `LINE`
+- `POINT`
+- `LWPOLYLINE`
+- 2D/3D `POLYLINE`、`VERTEX`、`SEQEND`
+- 闭合多段线
+- LWPOLYLINE/POLYLINE bulge 圆弧展开
+- 实体图层名称和三维顶点坐标
+
+当前限制：
+
+- 仅支持 ASCII DXF，Binary DXF 需要先导出为 ASCII DXF
+- 尚未展开 `INSERT` 块引用
+- 尚未处理 `SPLINE`、`ELLIPSE`、`HATCH` 等复杂实体
+- 暂不处理非默认 OCS/挤出方向
+
+建议从 CASS/AutoCAD 导出 `AutoCAD R12 ASCII DXF` 或 `AutoCAD 2007 ASCII DXF`。后续如需完整 Binary DXF 和复杂实体支持，可将 `DxfReader` 后端替换为
+[libdxfrw](https://github.com/LibreCAD/libdxfrw)，地图、规划和导航模块无需修改。
 
 通用图层分类和栅格构建已经通过独立测试验证，因此后续接入解析库时只需要让 `DxfReader` 输出 `MapFeature`，A*、导航和可视化模块无需修改。
 
@@ -343,7 +366,7 @@ Saved visualization snapshot: output/navigation_result.png
 - 当前版本不依赖 ROS。
 - 当前版本不实现 DWA，导航模块使用 Pure Pursuit 风格路径跟踪。
 - 当前版本可以读取华测/CASS 平面坐标 DAT，但地物分类仍采用针对样例测区的人工规则。
-- 通用 DXF 地物模型、图层映射和栅格构建已完成；DXF 文件解析后端等待链接 `libdxfrw`。
+- 已支持通用 ASCII DXF 图层解析、地物分类、栅格建图和导航；复杂实体与 Binary DXF 可在后续接入 `libdxfrw`。
 
 ## 后续可扩展方向
 
