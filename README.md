@@ -17,6 +17,20 @@ RTK / GNSS 测量数据
 
 项目从 WGS84 经纬高数据开始，将其转换为本地 ENU 米制坐标系，再生成 Occupancy Grid Map，最后使用 A* 规划路径，并通过 OpenCV 显示车辆沿路径运动的过程。
 
+## 效果展示
+
+### WGS84 示例数据导航
+
+程序读取带有道路、障碍物、边界、起点和终点标签的示例 RTK 数据，完成 ENU 坐标转换、栅格建图、A* 路径规划和车辆跟踪。
+
+![WGS84 示例数据导航结果](docs/images/synthetic_navigation_result.png)
+
+### 华测/CASS 实测数据导航
+
+程序读取华测 RTK 导出的 CASS DAT 平面坐标，排除远处基站记录，并基于测区地物轮廓生成近似占据地图。图中深色区域为建筑、水域和绿化障碍，黄色为 A* 路径，青色为车辆跟踪轨迹。
+
+![华测 CASS 实测数据导航结果](docs/images/cass_navigation_result.png)
+
 ## 技术栈
 
 - C++17
@@ -24,11 +38,7 @@ RTK / GNSS 测量数据
 - OpenCV
 - Eigen
 
-macOS 可以使用 Homebrew 安装依赖：
 
-```bash
-brew install cmake opencv eigen
-```
 
 ## 构建项目
 
@@ -104,6 +114,65 @@ I51,,394058.561,3418949.061,18.236
 - 其他点组：作为测量参考点显示，不直接判断为障碍物
 
 这套分类依据现有 CASS 地形图人工确认，属于近似地图。后续如果提供 DXF 图层，可以替换为按 CASS 图层自动识别地物。
+
+### 通用 DXF 导航架构
+
+项目已经加入与具体测区无关的 DXF 地图处理层：
+
+```text
+DXF geometry
+    -> MapFeature
+    -> LayerConfig
+    -> feature classification
+    -> FeatureMapBuilder
+    -> Occupancy Grid
+    -> A*
+    -> vehicle navigation
+```
+
+核心模块：
+
+- `MapFeature`：统一表示点、折线和闭合多边形
+- `LayerConfig`：通过 YAML 配置图层语义和占据规则
+- `FeatureMapBuilder`：将通用地物生成占据栅格
+- `DxfReader`：DXF 解析后端接口
+
+图层配置文件：
+
+```text
+config/dxf_layers.yaml
+```
+
+配置示例：
+
+```yaml
+rules:
+  - layers: [ "BUILDING", "JZW", "房屋", "建筑" ]
+    match: "exact"
+    semantic: "building"
+    occupancy: "occupied"
+    force_closed: 1
+    inflation: 1.5
+    line_width: 0.3
+```
+
+未来通用运行接口已经固定为：
+
+```bash
+./build/RTK-Navigation-System \
+  --dxf site.dxf \
+  --layer-config config/dxf_layers.yaml \
+  --start-x 100 \
+  --start-y 50 \
+  --goal-x 300 \
+  --goal-y 200 \
+  --no-gui
+```
+
+当前环境尚未链接 DXF 解析库，因此 `--dxf` 会明确提示解析后端不可用。计划使用成熟的
+[libdxfrw](https://github.com/LibreCAD/libdxfrw) 读取 ASCII/Binary DXF，而不是在项目中自行实现不完整的 DXF 解析器。
+
+通用图层分类和栅格构建已经通过独立测试验证，因此后续接入解析库时只需要让 `DxfReader` 输出 `MapFeature`，A*、导航和可视化模块无需修改。
 
 ## RTK 数据格式
 
@@ -274,6 +343,7 @@ Saved visualization snapshot: output/navigation_result.png
 - 当前版本不依赖 ROS。
 - 当前版本不实现 DWA，导航模块使用 Pure Pursuit 风格路径跟踪。
 - 当前版本可以读取华测/CASS 平面坐标 DAT，但地物分类仍采用针对样例测区的人工规则。
+- 通用 DXF 地物模型、图层映射和栅格构建已完成；DXF 文件解析后端等待链接 `libdxfrw`。
 
 ## 后续可扩展方向
 

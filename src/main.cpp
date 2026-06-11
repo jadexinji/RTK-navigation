@@ -9,8 +9,11 @@
 #include <vector>
 
 #include "common/Types.h"
+#include "config/LayerConfig.h"
 #include "coordinate/CoordinateTransformer.h"
+#include "dxf/DxfReader.h"
 #include "map/CassMapBuilder.h"
+#include "map/FeatureMapBuilder.h"
 #include "map/GridMap.h"
 #include "map/MapBuilder.h"
 #include "navigation/Navigator.h"
@@ -27,6 +30,12 @@ struct ProgramOptions {
     std::string csv_path = "data/rtk_points.csv";
     std::string output_path = "output/navigation_result.png";
     std::optional<std::string> cass_path;
+    std::optional<std::string> dxf_path;
+    std::string layer_config_path = "config/dxf_layers.yaml";
+    std::optional<double> start_x;
+    std::optional<double> start_y;
+    std::optional<double> goal_x;
+    std::optional<double> goal_y;
     std::string start_id = "I51";
     std::string goal_id = "I73";
     bool output_was_set = false;
@@ -39,7 +48,24 @@ void printUsage(const char* program_name) {
               << " [--csv data/rtk_points.csv] [--output output.png] [--no-gui]\n"
               << "  " << program_name
               << " --cass survey.dat [--start-id I51] [--goal-id I73]"
+                 " [--output output.png] [--no-gui]\n"
+              << "  " << program_name
+              << " --dxf site.dxf --layer-config config/dxf_layers.yaml"
+                 " --start-x X --start-y Y --goal-x X --goal-y Y"
                  " [--output output.png] [--no-gui]\n";
+}
+
+double parseArgumentDouble(const std::string& option, const std::string& value) {
+    try {
+        std::size_t parsed = 0;
+        const double result = std::stod(value, &parsed);
+        if (parsed != value.size()) {
+            throw std::invalid_argument("trailing characters");
+        }
+        return result;
+    } catch (const std::exception&) {
+        throw std::runtime_error(option + " requires a numeric value, got: " + value);
+    }
 }
 
 ProgramOptions parseArgs(int argc, char** argv) {
@@ -68,6 +94,37 @@ ProgramOptions parseArgs(int argc, char** argv) {
             options.cass_path = argv[++i];
             continue;
         }
+        if (arg == "--dxf") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error("--dxf requires a DXF file path");
+            }
+            options.dxf_path = argv[++i];
+            continue;
+        }
+        if (arg == "--layer-config") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error("--layer-config requires a YAML file path");
+            }
+            options.layer_config_path = argv[++i];
+            continue;
+        }
+        if (arg == "--start-x" || arg == "--start-y" ||
+            arg == "--goal-x" || arg == "--goal-y") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error(arg + " requires a numeric value");
+            }
+            const double value = parseArgumentDouble(arg, argv[++i]);
+            if (arg == "--start-x") {
+                options.start_x = value;
+            } else if (arg == "--start-y") {
+                options.start_y = value;
+            } else if (arg == "--goal-x") {
+                options.goal_x = value;
+            } else {
+                options.goal_y = value;
+            }
+            continue;
+        }
         if (arg == "--start-id") {
             if (i + 1 >= argc) {
                 throw std::runtime_error("--start-id requires a CASS point id");
@@ -93,6 +150,19 @@ ProgramOptions parseArgs(int argc, char** argv) {
         throw std::runtime_error("Unknown argument: " + arg);
     }
     return options;
+}
+
+PointType displayPointType(const FeatureStyle& style) {
+    if (style.semantic == FeatureSemantic::Road) {
+        return PointType::Road;
+    }
+    if (style.semantic == FeatureSemantic::Boundary) {
+        return PointType::Boundary;
+    }
+    if (style.occupancy == OccupancyEffect::Occupied) {
+        return PointType::Obstacle;
+    }
+    return PointType::Survey;
 }
 
 const CassPoint& findCassPoint(const std::vector<CassPoint>& points, const std::string& id) {
@@ -295,12 +365,74 @@ void runCassDat(const ProgramOptions& options) {
                     path_cells);
 }
 
+void runDxf(const ProgramOptions& options) {
+    if (!options.start_x.has_value() || !options.start_y.has_value() ||
+        !options.goal_x.has_value() || !options.goal_y.has_value()) {
+        throw std::runtime_error(
+            "DXF mode requires --start-x, --start-y, --goal-x, and --goal-y");
+    }
+
+    const LayerConfig layer_config =
+        LayerConfig::load(options.layer_config_path);
+    DxfReader reader;
+    const std::vector<MapFeature> features = reader.load(*options.dxf_path);
+    if (features.empty()) {
+        throw std::runtime_error("DXF file contains no supported map features");
+    }
+
+    const LocalPoint start{
+        "start", *options.start_x, *options.start_y, 0.0, PointType::Start};
+    const LocalPoint goal{
+        "goal", *options.goal_x, *options.goal_y, 0.0, PointType::Goal};
+    FeatureMapBuilder map_builder(layer_config);
+    const std::vector<ClassifiedFeature> classified =
+        map_builder.classify(features);
+    const GridMap grid_map = map_builder.build(features, start, goal);
+    const GridCell start_cell = grid_map.worldToGrid(start.x, start.y);
+    const GridCell goal_cell = grid_map.worldToGrid(goal.x, goal.y);
+    const std::vector<GridCell> path_cells =
+        AStar{}.plan(grid_map, start_cell, goal_cell);
+
+    std::vector<LocalPoint> display_points;
+    for (const ClassifiedFeature& feature : classified) {
+        const PointType point_type = displayPointType(feature.style);
+        for (std::size_t i = 0; i < feature.feature.vertices.size(); ++i) {
+            const FeatureVertex& vertex = feature.feature.vertices[i];
+            display_points.push_back(LocalPoint{
+                feature.feature.id + "-" + std::to_string(i),
+                vertex.x,
+                vertex.y,
+                vertex.z,
+                point_type
+            });
+        }
+    }
+    display_points.push_back(start);
+    display_points.push_back(goal);
+
+    const std::string output_path =
+        options.output_was_set ? options.output_path
+                               : "output/dxf_navigation_result.png";
+    std::cout << "Input mode: generic DXF\n";
+    std::cout << "DXF features: " << features.size() << "\n";
+    std::cout << "Layer config: " << options.layer_config_path << "\n";
+    visualizeResult(options,
+                    output_path,
+                    grid_map,
+                    display_points,
+                    start_cell,
+                    goal_cell,
+                    path_cells);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     try {
         const ProgramOptions options = parseArgs(argc, argv);
-        if (options.cass_path.has_value()) {
+        if (options.dxf_path.has_value()) {
+            runDxf(options);
+        } else if (options.cass_path.has_value()) {
             runCassDat(options);
         } else {
             runGeodeticCsv(options);

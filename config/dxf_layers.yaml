@@ -1,0 +1,56 @@
+%YAML:1.0
+---
+map:
+  resolution: 0.5
+  padding: 5.0
+  default_state: "free"
+  endpoint_clearance: 1.0
+
+rules:
+  - layers: [ "BUILDING", "BUILDINGS", "JZW", "FW", "房屋", "建筑" ]
+    match: "exact"
+    semantic: "building"
+    occupancy: "occupied"
+    force_closed: 1
+    inflation: 1.5
+    line_width: 0.3
+
+  - layers: [ "WATER", "RIVER", "SXSS", "河流", "水域" ]
+    match: "exact"
+    semantic: "water"
+    occupancy: "occupied"
+    force_closed: 1
+    inflation: 1.0
+    line_width: 0.3
+
+  - layers: [ "ROAD", "ROADS", "DL", "道路", "车行道" ]
+    match: "exact"
+    semantic: "road"
+    occupancy: "free"
+    force_closed: 0
+    inflation: 0.0
+    line_width: 4.0
+
+  - layers: [ "WALL", "FENCE", "WQ", "围墙", "围栏" ]
+    match: "exact"
+    semantic: "wall"
+    occupancy: "occupied"
+    force_closed: 0
+    inflation: 0.5
+    line_width: 0.3
+
+  - layers: [ "TREE", "GREEN", "VEGETATION", "绿化", "植被" ]
+    match: "contains"
+    semantic: "vegetation"
+    occupancy: "occupied"
+    force_closed: 0
+    inflation: 0.5
+    line_width: 0.5
+
+  - layers: [ "BOUNDARY", "REDLINE", "JZX", "边界", "红线" ]
+    match: "exact"
+    semantic: "boundary"
+    occupancy: "occupied"
+    force_closed: 0
+    inflation: 0.3
+    line_width: 0.3
