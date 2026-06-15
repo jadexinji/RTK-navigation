@@ -62,7 +62,12 @@ cv::Mat Viewer::renderFrame(const GridMap& map,
                             const std::vector<VehicleState>& trajectory,
                             const GridCell& start,
                             const GridCell& goal,
-                            std::optional<VehicleState> vehicle) const {
+                            std::optional<VehicleState> vehicle,
+                            const std::vector<VehicleState>&
+                                local_trajectory,
+                            const std::vector<
+                                std::vector<VehicleState>>&
+                                candidate_trajectories) const {
     const int pixels = cellPixels(map);
     cv::Mat image(map.height() * pixels, map.width() * pixels, CV_8UC3, cv::Scalar(255, 255, 255));
 
@@ -95,6 +100,40 @@ cv::Mat Viewer::renderFrame(const GridMap& map,
         cv::polylines(image, trajectory_pixels, false, cv::Scalar(255, 210, 40), std::max(1, pixels / 4), cv::LINE_AA);
     }
 
+    for (const std::vector<VehicleState>& candidate :
+         candidate_trajectories) {
+        if (candidate.size() < 2) {
+            continue;
+        }
+        std::vector<cv::Point> candidate_pixels;
+        candidate_pixels.reserve(candidate.size());
+        for (const VehicleState& state : candidate) {
+            candidate_pixels.push_back(
+                worldToPixel(map, state.x, state.y, pixels));
+        }
+        cv::polylines(image,
+                      candidate_pixels,
+                      false,
+                      cv::Scalar(205, 150, 205),
+                      1,
+                      cv::LINE_AA);
+    }
+
+    if (local_trajectory.size() > 1) {
+        std::vector<cv::Point> local_pixels;
+        local_pixels.reserve(local_trajectory.size());
+        for (const VehicleState& state : local_trajectory) {
+            local_pixels.push_back(
+                worldToPixel(map, state.x, state.y, pixels));
+        }
+        cv::polylines(image,
+                      local_pixels,
+                      false,
+                      cv::Scalar(60, 210, 80),
+                      std::max(2, pixels / 3),
+                      cv::LINE_AA);
+    }
+
     for (const LocalPoint& point : points) {
         const cv::Point pixel = worldToPixel(map, point.x, point.y, pixels);
         const int radius = std::max(3, pixels / 2);
@@ -117,7 +156,12 @@ void Viewer::show(const GridMap& map,
                   const std::vector<GridCell>& path,
                   const std::vector<VehicleState>& trajectory,
                   const GridCell& start,
-                  const GridCell& goal) const {
+                  const GridCell& goal,
+                  const std::vector<std::vector<VehicleState>>&
+                      local_trajectories,
+                  const std::vector<
+                      std::vector<std::vector<VehicleState>>>&
+                      candidate_trajectory_sets) const {
     if (trajectory.empty()) {
         const cv::Mat frame = renderFrame(map, points, path, trajectory, start, goal);
         cv::imshow(config_.window_name, frame);
@@ -125,8 +169,33 @@ void Viewer::show(const GridMap& map,
         return;
     }
 
-    for (const VehicleState& state : trajectory) {
-        const cv::Mat frame = renderFrame(map, points, path, trajectory, start, goal, state);
+    for (std::size_t i = 0; i < trajectory.size(); ++i) {
+        const std::vector<VehicleState> empty_local;
+        const std::vector<VehicleState>& local_trajectory =
+            local_trajectories.empty()
+                ? empty_local
+                : local_trajectories[
+                      std::min(i, local_trajectories.size() - 1)];
+        const std::vector<std::vector<VehicleState>>
+            empty_candidates;
+        const std::vector<std::vector<VehicleState>>&
+            candidate_trajectories =
+                candidate_trajectory_sets.empty()
+                    ? empty_candidates
+                    : candidate_trajectory_sets[
+                          std::min(
+                              i,
+                              candidate_trajectory_sets.size() -
+                                  1)];
+        const cv::Mat frame = renderFrame(map,
+                                          points,
+                                          path,
+                                          trajectory,
+                                          start,
+                                          goal,
+                                          trajectory[i],
+                                          local_trajectory,
+                                          candidate_trajectories);
         cv::imshow(config_.window_name, frame);
         const int key = cv::waitKey(config_.animation_delay_ms);
         if (key == 27 || key == 'q' || key == 'Q') {
@@ -143,10 +212,47 @@ void Viewer::saveSnapshot(const std::string& output_path,
                           const std::vector<GridCell>& path,
                           const std::vector<VehicleState>& trajectory,
                           const GridCell& start,
-                          const GridCell& goal) const {
+                          const GridCell& goal,
+                          const std::vector<std::vector<VehicleState>>&
+                              local_trajectories,
+                          const std::vector<
+                              std::vector<std::vector<VehicleState>>>&
+                              candidate_trajectory_sets) const {
+    const std::size_t frame_index =
+        candidate_trajectory_sets.empty()
+            ? (trajectory.empty() ? 0 : trajectory.size() - 1)
+            : candidate_trajectory_sets.size() / 2;
     const std::optional<VehicleState> vehicle =
-        trajectory.empty() ? std::nullopt : std::optional<VehicleState>(trajectory.back());
-    const cv::Mat frame = renderFrame(map, points, path, trajectory, start, goal, vehicle);
+        trajectory.empty()
+            ? std::nullopt
+            : std::optional<VehicleState>(
+                  trajectory[std::min(frame_index,
+                                      trajectory.size() - 1)]);
+    const std::vector<VehicleState> empty_local;
+    const std::vector<VehicleState>& local_trajectory =
+        local_trajectories.empty()
+            ? empty_local
+            : local_trajectories[
+                  std::min(frame_index,
+                           local_trajectories.size() - 1)];
+    const std::vector<std::vector<VehicleState>> empty_candidates;
+    const std::vector<std::vector<VehicleState>>&
+        candidate_trajectories =
+            candidate_trajectory_sets.empty()
+                ? empty_candidates
+                : candidate_trajectory_sets[
+                      std::min(
+                          frame_index,
+                          candidate_trajectory_sets.size() - 1)];
+    const cv::Mat frame = renderFrame(map,
+                                      points,
+                                      path,
+                                      trajectory,
+                                      start,
+                                      goal,
+                                      vehicle,
+                                      local_trajectory,
+                                      candidate_trajectories);
     if (!cv::imwrite(output_path, frame)) {
         throw std::runtime_error("Failed to write visualization image: " + output_path);
     }

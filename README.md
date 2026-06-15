@@ -1,8 +1,8 @@
 # RTK-Navigation-System
 
-`RTK-Navigation-System` 是一个基于 C++17 的 RTK / GNSS 导航系统仿真项目。
+`RTK-Navigation-System` 是一个基于 C++17 的机器人导航系统项目，支持 RTK / GNSS、CASS DAT 和 DXF 地图输入。
 
-项目目标不是做一个简单的路径规划 demo，而是模拟真实导航系统中的一条核心流程：将测量得到的地理坐标数据转换为机器人或自动驾驶车辆可使用的局部地图，并在地图上完成路径规划与车辆导航可视化。
+项目将测量得到的地理坐标或工程地图转换为机器人可使用的局部占据栅格，使用 A* 生成全局参考路径，再由 DWA 局部规划器根据机器人运动学、速度约束和障碍物净空实时选择短时轨迹。
 
 ## 项目流程
 
@@ -12,28 +12,45 @@ RTK / GNSS 测量数据
         -> 局部地图生成
         -> 占据栅格地图
         -> A* 全局路径规划
-        -> 车辆导航可视化
+        -> DWA 局部轨迹规划
+        -> 机器人导航可视化
 ```
 
-项目从 WGS84 经纬高数据开始，将其转换为本地 ENU 米制坐标系，再生成 Occupancy Grid Map，最后使用 A* 规划路径，并通过 OpenCV 显示车辆沿路径运动的过程。
+项目从 WGS84 经纬高、CASS 平面坐标或 DXF 地物数据开始，生成 Occupancy Grid Map，通过 OpenCV 显示 A* 全局路径、DWA 局部预测轨迹和机器人实际运动轨迹。
 
 ## 效果展示
 
 ### WGS84 示例数据导航
 
-程序读取带有道路、障碍物、边界、起点和终点标签的示例 RTK 数据，完成 ENU 坐标转换、栅格建图、A* 路径规划和车辆跟踪。
+程序读取带有道路、障碍物、边界、起点和终点标签的示例 RTK 数据，完成 ENU 坐标转换、栅格建图、A* 全局规划和 DWA 局部导航。
 
-![WGS84 示例数据导航结果](docs/images/synthetic_navigation_result.png)
+![WGS84 DWA 机器人导航结果](docs/images/dwa_navigation_result.png)
+
+图中：
+
+- 橙黄色折线：A* 全局参考路径
+- 青色曲线：DWA 连续重规划后形成的机器人实际轨迹
+- 淡紫色曲线：当前动态窗口内采样的 DWA 候选轨迹
+- 绿色粗线：候选轨迹中得分最高的最优局部轨迹
+- 三角形：机器人当前位置和朝向
+
+DWA 不会机械地沿 A* 栅格折线移动，而是在保持安全净空的同时生成满足速度和角速度约束的平滑轨迹。淡紫色候选中可能包含碰撞轨迹，它们仅用于展示采样空间，规划时会被剔除。
+
+效果截图保存在：
+
+```text
+docs/images/dwa_navigation_result.png
+```
 
 ### 华测/CASS 实测数据导航
 
-程序读取华测 RTK 导出的 CASS DAT 平面坐标，排除远处基站记录，并基于测区地物轮廓生成近似占据地图。图中深色区域为建筑、水域和绿化障碍，黄色为 A* 路径，青色为车辆跟踪轨迹。
+程序读取华测 RTK 导出的 CASS DAT 平面坐标，排除远处基站记录，并基于测区地物轮廓生成近似占据地图。图中深色区域为建筑、水域和绿化障碍，黄色为 A* 路径，青色为机器人运动轨迹。
 
 ![华测 CASS 实测数据导航结果](docs/images/cass_navigation_result.png)
 
 ### 通用 DXF 导航
 
-程序读取 ASCII DXF 中的图层和几何实体，根据 YAML 图层规则识别建筑、道路、水域、植被和围墙，再自动生成占据地图和导航路径。当前效果图启用了道路约束模式：只有道路区域可通行，车辆不会从普通空地穿过。
+程序读取 ASCII DXF 中的图层和几何实体，根据 YAML 图层规则识别建筑、道路、水域、植被和围墙，再自动生成占据地图和导航路径。当前效果图启用了道路约束模式：只有道路区域可通行，机器人不会从普通空地穿过。
 
 ![通用 DXF 导航结果](docs/images/dxf_navigation_result.png)
 
@@ -65,6 +82,22 @@ cmake --build build
 
 ```bash
 ./build/RTK-Navigation-System --no-gui
+```
+
+所有输入模式都会自动执行：
+
+```text
+GridMap -> A* 全局路径 -> DWA 局部规划 -> OpenCV 可视化
+```
+
+DWA 默认参数定义在 `src/planner/DWAPlanner.h`，包括最大速度、最大角速度、加速度、预测时域、机器人半径、采样分辨率和四项评价权重。无需增加命令行参数即可运行。
+
+生成包含 A*、DWA 候选轨迹和最优局部轨迹的截图：
+
+```bash
+./build/RTK-Navigation-System \
+  --no-gui \
+  --output output/dwa_navigation_result.png
 ```
 
 默认输出图片：
@@ -110,7 +143,9 @@ I51,,394058.561,3418949.061,18.236
 - 直接使用已有平面坐标，不再执行 WGS84 到 ENU 转换
 - 将测区最小坐标作为局部地图原点
 - 根据指定点号设置导航起点和终点
-- 生成占据栅格、A* 路径和车辆轨迹
+- 生成占据栅格、A* 路径和 DWA 机器人轨迹
+
+CASS 模式会为 A* 启用障碍物净空代价，避免全局参考路径紧贴大型建筑边缘，为 DWA 的机器人足迹和制动距离留出空间。
 
 当前对 `海资.dat` 的试验性分类规则：
 
@@ -133,7 +168,8 @@ DXF geometry
     -> FeatureMapBuilder
     -> Occupancy Grid
     -> A*
-    -> vehicle navigation
+    -> DWA
+    -> robot navigation
 ```
 
 核心模块：
@@ -283,6 +319,8 @@ src/
   planner/
     AStar.h
     AStar.cpp
+    DWAPlanner.h
+    DWAPlanner.cpp
   navigation/
     Navigator.h
     Navigator.cpp
@@ -352,18 +390,63 @@ latitude / longitude / height
 - 通过检查相邻侧边格子避免斜向穿越障碍角点
 - 输出从起点到终点的 `GridCell` 路径
 
-### 5. 车辆导航仿真
+### 5. DWA 局部规划
+
+`DWAPlanner` 以 A* 路径为全局参考，在每个控制周期内完成以下步骤：
+
+规划接口显式接收：
+
+- 当前机器人状态：`x, y, yaw, v, w`
+- 目标点：`goal_x, goal_y`
+- A* 全局路径
+- `GridMap` 占据栅格
+
+1. 根据当前速度、角速度和加速度约束计算动态窗口。
+2. 在窗口内采样线速度 `v` 和角速度 `w`。
+3. 使用独轮车运动学模型预测短时轨迹：
+
+```text
+x(k+1)   = x(k) + v * cos(yaw) * dt
+y(k+1)   = y(k) + v * sin(yaw) * dt
+yaw(k+1) = yaw(k) + w * dt
+```
+
+4. 从 `GridMap` 查询附近占用栅格，计算机器人圆形足迹到障碍栅格边界的净空。
+5. 标记发生碰撞或净空小于制动距离的候选轨迹。
+6. 对安全轨迹计算归一化加权得分并选择最高分轨迹：
+
+```text
+Score = heading_weight  * 目标方向得分
+      + path_weight     * A* 路径跟随得分
+      + obstacle_weight * 障碍物净空得分
+      + speed_weight    * 速度得分
+
+best_trajectory = argmax(Score)
+```
+
+规划器每轮只执行选中轨迹的第一个控制步，然后基于新状态重新规划。`DWAPlanResult` 输出所有采样候选的 `v、w、score、clearance、collision_free` 以及最优局部轨迹，`DWANavigationResult` 保存机器人实际轨迹、每轮候选集合和每轮最优轨迹。
+
+默认机器人参数：
+
+- 最大线速度：`1.2 m/s`
+- 最大角速度：`1.2 rad/s`
+- 预测时域：`2.0 s`
+- 控制周期：`0.1 s`
+- 机器人半径：`0.2 m`
+- 目标容差：`0.4 m`
+
+### 6. 兼容导航仿真
 
 `Navigator` 将 A* 路径转换为车辆运动轨迹。
 
-当前版本使用轻量 Pure Pursuit 风格控制器：
+该模块保留原有轻量 Pure Pursuit 风格控制器接口，避免破坏已有代码；当前主流程已经切换为 DWA：
 
 - 固定前视距离
 - 固定速度
 - 根据路径目标点更新车辆航向
 - 输出车辆状态序列：`x, y, yaw, velocity`
 
-### 6. 可视化
+### 7. 可视化
 
 `Viewer` 使用 OpenCV 显示导航结果。
 
@@ -373,9 +456,17 @@ latitude / longitude / height
 - 道路区域
 - 障碍物
 - 边界
-- A* 规划路径
-- 车辆运动轨迹
-- 当前车辆姿态
+- A* 全局规划路径
+- DWA 采样候选轨迹
+- DWA 得分最高的最优局部轨迹
+- 机器人实际运动轨迹
+- 当前机器人姿态
+
+## 简历描述
+
+可直接用于简历的项目描述：
+
+> 基于 C++17、OpenCV 和占据栅格地图实现机器人导航系统：使用 A* 生成全局路径，设计 DWA 局部规划器在动态窗口内采样线速度与角速度，基于差速运动学预测候选轨迹，并融合目标方向、路径偏差、障碍物净空和速度偏好进行评分；实现机器人圆形足迹碰撞检测、制动距离约束及候选/最优轨迹可视化，支持 RTK/GNSS、CASS DAT 和 DXF 地图输入。
 
 ## 示例运行输出
 
@@ -388,7 +479,10 @@ Grid map: 82 x 49 cells, resolution=0.5 m/cell
 Start cell: row=15 col=16
 Goal cell: row=31 col=64
 A* path cells: 49
-Vehicle trajectory states: 212
+DWA local plans: 326
+DWA trajectory states: 327
+DWA reached goal: yes
+DWA trajectory collision states: 0
 Saved visualization snapshot: output/navigation_result.png
 ```
 
@@ -397,7 +491,9 @@ Saved visualization snapshot: output/navigation_result.png
 - 当前版本是仿真与可视化系统。
 - 当前版本不连接真实 RTK / GNSS 硬件。
 - 当前版本不依赖 ROS。
-- 当前版本不实现 DWA，导航模块使用 Pure Pursuit 风格路径跟踪。
+- 当前主流程使用 A* 全局规划和 DWA 局部规划。
+- DWA 支持 `v/w` 动态窗口采样、短时运动学预测、机器人圆形足迹碰撞检测和制动距离检查。
+- 原有 Pure Pursuit 风格 `Navigator` 仍保留，便于兼容和对比。
 - 当前版本可以读取华测/CASS 平面坐标 DAT，但地物分类仍采用针对样例测区的人工规则。
 - 已支持通用 ASCII DXF 图层解析、地物分类、栅格建图和导航；复杂实体与 Binary DXF 可在后续接入 `libdxfrw`。
 - DXF 模式支持道路约束建图、起终点道路校验和道路边缘代价。
@@ -407,7 +503,8 @@ Saved visualization snapshot: output/navigation_result.png
 - 读取真实 RTK 采集数据
 - 支持更多坐标系统和投影方式
 - 增加地图滤波与点云预处理
-- 加入 DWA 或 MPC 局部规划器
+- 增加动态障碍物预测和速度障碍模型
+- 加入 MPC 局部规划器并与 DWA 对比
 - 接入 ROS 2
 - 增加实时 GNSS 数据输入
-- 增加车辆运动学模型
+- 增加差速、阿克曼等可配置机器人模型

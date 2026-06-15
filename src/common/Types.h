@@ -48,6 +48,7 @@ struct VehicleState {
     double y = 0.0;
     double yaw = 0.0;
     double velocity = 0.0;
+    double angular_velocity = 0.0;
 };
 
 inline std::string pointTypeToString(PointType type) {

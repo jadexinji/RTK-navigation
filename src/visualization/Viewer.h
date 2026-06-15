@@ -29,14 +29,22 @@ public:
                         const std::vector<VehicleState>& trajectory,
                         const GridCell& start,
                         const GridCell& goal,
-                        std::optional<VehicleState> vehicle = std::nullopt) const;
+                        std::optional<VehicleState> vehicle = std::nullopt,
+                        const std::vector<VehicleState>&
+                            local_trajectory = {},
+                        const std::vector<std::vector<VehicleState>>&
+                            candidate_trajectories = {}) const;
 
     void show(const GridMap& map,
               const std::vector<LocalPoint>& points,
               const std::vector<GridCell>& path,
               const std::vector<VehicleState>& trajectory,
               const GridCell& start,
-              const GridCell& goal) const;
+              const GridCell& goal,
+              const std::vector<std::vector<VehicleState>>&
+                  local_trajectories = {},
+              const std::vector<std::vector<std::vector<VehicleState>>>&
+                  candidate_trajectory_sets = {}) const;
 
     void saveSnapshot(const std::string& output_path,
                       const GridMap& map,
@@ -44,7 +52,12 @@ public:
                       const std::vector<GridCell>& path,
                       const std::vector<VehicleState>& trajectory,
                       const GridCell& start,
-                      const GridCell& goal) const;
+                      const GridCell& goal,
+                      const std::vector<std::vector<VehicleState>>&
+                          local_trajectories = {},
+                      const std::vector<
+                          std::vector<std::vector<VehicleState>>>&
+                          candidate_trajectory_sets = {}) const;
 
 private:
     int cellPixels(const GridMap& map) const;

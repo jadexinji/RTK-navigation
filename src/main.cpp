@@ -1,6 +1,7 @@
 #include <filesystem>
 #include <cstdlib>
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -16,8 +17,8 @@
 #include "map/FeatureMapBuilder.h"
 #include "map/GridMap.h"
 #include "map/MapBuilder.h"
-#include "navigation/Navigator.h"
 #include "planner/AStar.h"
+#include "planner/DWAPlanner.h"
 #include "sensor/CassDatReader.h"
 #include "sensor/RTKReader.h"
 #include "visualization/Viewer.h"
@@ -217,16 +218,23 @@ void visualizeResult(const ProgramOptions& options,
                      const GridCell& start_cell,
                      const GridCell& goal_cell,
                      const std::vector<GridCell>& path_cells,
-                     double navigation_lookahead = 1.0) {
-    std::vector<VehicleState> trajectory;
+                     double navigation_lookahead = 2.0) {
+    DWANavigationResult navigation;
     if (!path_cells.empty()) {
-        NavigatorConfig navigator_config;
-        navigator_config.lookahead_distance = navigation_lookahead;
-        Navigator navigator(navigator_config);
-        trajectory = navigator.simulate(pathCellsToWorld(grid_map, path_cells));
+        DWAConfig dwa_config;
+        dwa_config.path_lookahead = navigation_lookahead;
+        DWAPlanner planner(dwa_config);
+        const std::pair<double, double> goal =
+            grid_map.gridToWorld(goal_cell);
+        navigation = planner.navigate(
+            grid_map,
+            goal,
+            pathCellsToWorld(grid_map, path_cells));
     }
     const std::size_t collision_states = static_cast<std::size_t>(std::count_if(
-        trajectory.begin(), trajectory.end(), [&](const VehicleState& state) {
+        navigation.trajectory.begin(),
+        navigation.trajectory.end(),
+        [&](const VehicleState& state) {
             return !grid_map.isFree(grid_map.worldToGrid(state.x, state.y));
         }));
 
@@ -235,10 +243,51 @@ void visualizeResult(const ProgramOptions& options,
     std::cout << "Start cell: row=" << start_cell.row << " col=" << start_cell.col << "\n";
     std::cout << "Goal cell: row=" << goal_cell.row << " col=" << goal_cell.col << "\n";
     std::cout << "A* path cells: " << path_cells.size() << "\n";
-    std::cout << "Vehicle trajectory states: " << trajectory.size() << "\n";
-    std::cout << "Vehicle trajectory collision states: " << collision_states << "\n";
+    std::cout << "DWA local plans: "
+              << navigation.local_trajectories.size() << "\n";
+    std::cout << "DWA trajectory states: "
+              << navigation.trajectory.size() << "\n";
+    std::cout << "DWA reached goal: "
+              << (navigation.reached_goal ? "yes" : "no") << "\n";
+    std::cout << "DWA trajectory collision states: "
+              << collision_states << "\n";
+    if (!navigation.trajectory.empty()) {
+        const VehicleState& final_state =
+            navigation.trajectory.back();
+        const auto [goal_x, goal_y] =
+            grid_map.gridToWorld(goal_cell);
+        const double dx = final_state.x - goal_x;
+        const double dy = final_state.y - goal_y;
+        std::cout << "DWA final state: x=" << final_state.x
+                  << " y=" << final_state.y
+                  << " yaw=" << final_state.yaw
+                  << " v=" << final_state.velocity
+                  << " w=" << final_state.angular_velocity
+                  << " goal_distance="
+                  << std::sqrt(dx * dx + dy * dy) << "\n";
+    }
+    if (!navigation.local_trajectories.empty()) {
+        const std::vector<VehicleState>& first_local =
+            navigation.local_trajectories.front();
+        if (first_local.size() > 1) {
+            std::cout << "First DWA command: v="
+                      << first_local[1].velocity
+                      << " w=" << first_local[1].angular_velocity
+                      << "\n";
+        }
+        std::cout << "Last DWA local trajectory states: "
+                  << navigation.local_trajectories.back().size()
+                  << "\n";
+    }
+    if (!navigation.candidate_trajectories.empty()) {
+        std::cout << "Last DWA sampled candidates: "
+                  << navigation.candidate_trajectories.back().size()
+                  << "\n";
+    }
     if (path_cells.empty()) {
         std::cout << "Warning: no path found. The map will still be visualized.\n";
+    } else if (!navigation.reached_goal) {
+        std::cout << "Warning: DWA stopped before reaching the goal.\n";
     }
 
     Viewer viewer;
@@ -247,17 +296,21 @@ void visualizeResult(const ProgramOptions& options,
                         grid_map,
                         local_points,
                         path_cells,
-                        trajectory,
+                        navigation.trajectory,
                         start_cell,
-                        goal_cell);
+                        goal_cell,
+                        navigation.local_trajectories,
+                        navigation.candidate_trajectories);
     std::cout << "Saved visualization snapshot: " << output_path << "\n";
     if (!options.no_gui) {
         viewer.show(grid_map,
                     local_points,
                     path_cells,
-                    trajectory,
+                    navigation.trajectory,
                     start_cell,
-                    goal_cell);
+                    goal_cell,
+                    navigation.local_trajectories,
+                    navigation.candidate_trajectories);
     }
 }
 
@@ -341,7 +394,11 @@ void runCassDat(const ProgramOptions& options) {
     const GridMap grid_map = map_builder.build(cass_local, start_local, goal_local);
     const GridCell start_cell = grid_map.worldToGrid(start_local.x, start_local.y);
     const GridCell goal_cell = grid_map.worldToGrid(goal_local.x, goal_local.y);
-    const std::vector<GridCell> path_cells = AStar{}.plan(grid_map, start_cell, goal_cell);
+    AStarConfig planner_config;
+    planner_config.clearance_cost_radius = 2.0;
+    planner_config.clearance_cost_weight = 3.0;
+    const std::vector<GridCell> path_cells =
+        AStar{planner_config}.plan(grid_map, start_cell, goal_cell);
 
     const std::string output_path =
         options.output_was_set ? options.output_path : "output/cass_navigation_result.png";

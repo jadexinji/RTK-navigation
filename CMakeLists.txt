@@ -21,6 +21,7 @@ add_executable(${PROJECT_NAME}
     src/map/CassMapBuilder.cpp
     src/map/FeatureMapBuilder.cpp
     src/planner/AStar.cpp
+    src/planner/DWAPlanner.cpp
     src/navigation/Navigator.cpp
     src/visualization/Viewer.cpp
 )
@@ -113,4 +114,21 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME astar_clearance COMMAND astar_clearance_test)
+
+    add_executable(dwa_planner_test
+        tests/DWAPlannerTest.cpp
+        src/map/GridMap.cpp
+        src/planner/AStar.cpp
+        src/planner/DWAPlanner.cpp
+    )
+
+    target_include_directories(dwa_planner_test PRIVATE src)
+
+    if(MSVC)
+        target_compile_options(dwa_planner_test PRIVATE /W4)
+    else()
+        target_compile_options(dwa_planner_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    add_test(NAME dwa_planner COMMAND dwa_planner_test)
 endif()
