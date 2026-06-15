@@ -1,22 +1,46 @@
 # RTK-Navigation-System
 
-`RTK-Navigation-System` 是一个基于 C++17 的机器人导航系统项目，支持 RTK / GNSS、CASS DAT 和 DXF 地图输入。
+## 项目背景
 
-项目将测量得到的地理坐标或工程地图转换为机器人可使用的局部占据栅格，使用 A* 生成全局参考路径，再由 DWA 局部规划器根据机器人运动学、速度约束和障碍物净空实时选择短时轨迹。
+`RTK-Navigation-System` 是一个由 RTK / GIS 数据驱动的机器人导航仿真项目。系统将 WGS84 经纬高、CASS DAT 平面测量数据或 DXF 工程地图转换为局部占据栅格，使用 A* 生成全局路径，再由 DWA 根据机器人运动学、速度约束和障碍物净空进行局部动态规划。
 
-## 项目流程
+项目重点展示从测绘数据到机器人导航的完整链路，不依赖 ROS 2，可直接使用 CMake 构建并通过 OpenCV 查看规划与运动过程。
 
-```text
-RTK / GNSS 测量数据
-        -> 坐标转换
-        -> 局部地图生成
-        -> 占据栅格地图
-        -> A* 全局路径规划
-        -> DWA 局部轨迹规划
-        -> 机器人导航可视化
+核心能力：
+
+- RTK / GNSS WGS84 坐标转本地 ENU 米制坐标
+- CASS DAT 与 ASCII DXF 地图读取
+- Occupancy Grid 栅格建图与障碍物表达
+- A* 全局路径规划与道路边缘净空代价
+- DWA 速度采样、轨迹预测、碰撞检测和局部重规划
+- OpenCV 显示地图、障碍物、候选轨迹、最优轨迹和机器人运动过程
+
+## 技术栈
+
+- C++17
+- CMake
+- OpenCV
+- Eigen
+- A* 全局规划
+- DWA 局部规划
+- RTK / GNSS / GIS 数据处理
+
+## 系统流程图
+
+```mermaid
+flowchart LR
+    A["RTK / CASS / DXF 数据"] --> B["坐标转换与地物解析"]
+    B --> C["Occupancy Grid 栅格地图"]
+    C --> D["A* 全局路径规划"]
+    C --> E["GridMap 障碍物查询"]
+    D --> F["DWA 局部规划"]
+    E --> F
+    F --> G["机器人运动状态更新"]
+    G --> F
+    D --> H["OpenCV 可视化"]
+    F --> H
+    G --> H
 ```
-
-项目从 WGS84 经纬高、CASS 平面坐标或 DXF 地物数据开始，生成 Occupancy Grid Map，通过 OpenCV 显示 A* 全局路径、DWA 局部预测轨迹和机器人实际运动轨迹。
 
 ## 效果展示
 
@@ -24,7 +48,7 @@ RTK / GNSS 测量数据
 
 程序读取带有道路、障碍物、边界、起点和终点标签的示例 RTK 数据，完成 ENU 坐标转换、栅格建图、A* 全局规划和 DWA 局部导航。
 
-![WGS84 DWA 机器人导航结果](docs/images/dwa_navigation_result.png)
+![WGS84 DWA 机器人导航结果](screenshots/rtk_dwa_navigation.png)
 
 图中：
 
@@ -36,32 +60,26 @@ RTK / GNSS 测量数据
 
 DWA 不会机械地沿 A* 栅格折线移动，而是在保持安全净空的同时生成满足速度和角速度约束的平滑轨迹。淡紫色候选中可能包含碰撞轨迹，它们仅用于展示采样空间，规划时会被剔除。
 
-效果截图保存在：
+效果截图统一保存在：
 
 ```text
-docs/images/dwa_navigation_result.png
+screenshots/
+  rtk_dwa_navigation.png
+  cass_dwa_navigation.png
+  dxf_dwa_navigation.png
 ```
 
 ### 华测/CASS 实测数据导航
 
 程序读取华测 RTK 导出的 CASS DAT 平面坐标，排除远处基站记录，并基于测区地物轮廓生成近似占据地图。图中深色区域为建筑、水域和绿化障碍，黄色为 A* 路径，青色为机器人运动轨迹。
 
-![华测 CASS 实测数据导航结果](docs/images/cass_navigation_result.png)
+![华测 CASS 实测数据导航结果](screenshots/cass_dwa_navigation.png)
 
 ### 通用 DXF 导航
 
 程序读取 ASCII DXF 中的图层和几何实体，根据 YAML 图层规则识别建筑、道路、水域、植被和围墙，再自动生成占据地图和导航路径。当前效果图启用了道路约束模式：只有道路区域可通行，机器人不会从普通空地穿过。
 
-![通用 DXF 导航结果](docs/images/dxf_navigation_result.png)
-
-## 技术栈
-
-- C++17
-- CMake
-- OpenCV
-- Eigen
-
-
+![通用 DXF 导航结果](screenshots/dxf_dwa_navigation.png)
 
 ## 构建项目
 
@@ -72,7 +90,9 @@ cmake --build build
 
 ## 运行项目
 
-打开 OpenCV 动画窗口：
+### 默认 RTK 示例
+
+打开 OpenCV 动画窗口，查看地图、A* 全局路径、DWA 局部轨迹和机器人运动过程：
 
 ```bash
 ./build/RTK-Navigation-System
@@ -97,7 +117,7 @@ DWA 默认参数定义在 `src/planner/DWAPlanner.h`，包括最大速度、最�
 ```bash
 ./build/RTK-Navigation-System \
   --no-gui \
-  --output output/dwa_navigation_result.png
+  --output screenshots/rtk_dwa_navigation.png
 ```
 
 默认输出图片：
@@ -112,7 +132,7 @@ output/navigation_result.png
 ./build/RTK-Navigation-System --csv data/rtk_points.csv --output output/navigation_result.png
 ```
 
-### 运行华测/CASS DAT 实测数据
+### 华测/CASS DAT 实测数据
 
 项目支持直接读取华测 RTK 导出的 CASS 平面坐标 DAT：
 
@@ -156,7 +176,21 @@ CASS 模式会为 A* 启用障碍物净空代价，避免全局参考路径紧�
 
 这套分类依据现有 CASS 地形图人工确认，属于近似地图。后续如果提供 DXF 图层，可以替换为按 CASS 图层自动识别地物。
 
-### 通用 DXF 导航架构
+### 通用 DXF 导航
+
+```bash
+./build/RTK-Navigation-System \
+  --dxf tests/fixtures/navigation_map_ascii.dxf \
+  --layer-config config/dxf_layers.yaml \
+  --start-x 2 \
+  --start-y 11 \
+  --goal-x 15 \
+  --goal-y 24 \
+  --no-gui \
+  --output screenshots/dxf_dwa_navigation.png
+```
+
+## 通用 DXF 导航架构
 
 项目已经加入与具体测区无关的 DXF 地图处理层：
 
@@ -464,9 +498,19 @@ best_trajectory = argmax(Score)
 
 ## 简历描述
 
+项目名称建议：
+
+```text
+RTK/GIS 数据驱动的机器人导航仿真系统
+```
+
 可直接用于简历的项目描述：
 
 > 基于 C++17、OpenCV 和占据栅格地图实现机器人导航系统：使用 A* 生成全局路径，设计 DWA 局部规划器在动态窗口内采样线速度与角速度，基于差速运动学预测候选轨迹，并融合目标方向、路径偏差、障碍物净空和速度偏好进行评分；实现机器人圆形足迹碰撞检测、制动距离约束及候选/最优轨迹可视化，支持 RTK/GNSS、CASS DAT 和 DXF 地图输入。
+
+精简版：
+
+> 基于 C++17 实现 RTK/GIS 机器人导航仿真系统，完成 ENU 坐标转换、占据栅格建图、A* 全局规划和 DWA 局部避障，并使用 OpenCV 可视化候选轨迹、最优轨迹及机器人运动过程。
 
 ## 示例运行输出
 
@@ -505,6 +549,5 @@ Saved visualization snapshot: output/navigation_result.png
 - 增加地图滤波与点云预处理
 - 增加动态障碍物预测和速度障碍模型
 - 加入 MPC 局部规划器并与 DWA 对比
-- 接入 ROS 2
 - 增加实时 GNSS 数据输入
 - 增加差速、阿克曼等可配置机器人模型
